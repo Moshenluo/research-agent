@@ -357,10 +357,10 @@ def render_chat_mode():
         content = msg["content"]
 
         if role == "user":
-            with st.chat_message("user", avatar="🧑‍🎓"):
+            with st.chat_message("user", avatar="U"):
                 st.markdown(content)
         else:
-            with st.chat_message("assistant", avatar="🔬"):
+            with st.chat_message("assistant", avatar="A"):
                 st.markdown(content)
                 if "sources" in msg and msg["sources"]:
                     with st.expander(f"📎 引用来源（{len(msg['sources'])} 条）"):
@@ -391,10 +391,10 @@ def render_chat_mode():
             return
 
         st.session_state.chat_history.append({"role": "user", "content": prompt})
-        with st.chat_message("user", avatar="‍🎓"):
+        with st.chat_message("user", avatar="U"):
             st.markdown(prompt)
 
-        with st.chat_message("assistant", avatar="🔬"):
+        with st.chat_message("assistant", avatar="A"):
             try:
                 answer_placeholder = st.empty()
                 sources = []

@@ -4,6 +4,7 @@
 """
 
 import os
+import traceback
 
 # 禁用 ChromaDB 遥测，避免 posthog/tenacity 引发 RuntimeError
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
@@ -31,105 +32,42 @@ st.set_page_config(
 
 CUSTOM_CSS = """
 <style>
-    /* 整体风格 */
-    .stApp {
-        max-width: 1200px;
-        margin: 0 auto;
-    }
-
-    /* 标题 */
+    .stApp { max-width: 1200px; margin: 0 auto; }
     .app-title {
-        font-size: 2rem;
-        font-weight: 700;
+        font-size: 2rem; font-weight: 700;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        text-align: center;
-        padding: 1rem 0;
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        text-align: center; padding: 1rem 0;
     }
-
-    .app-subtitle {
-        text-align: center;
-        color: #666;
-        font-size: 0.9rem;
-        margin-bottom: 1.5rem;
-    }
-
-    /* 来源标签 */
+    .app-subtitle { text-align: center; color: #666; font-size: 0.9rem; margin-bottom: 1.5rem; }
     .source-tag {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        margin: 2px;
-        color: white;
+        display: inline-block; padding: 2px 8px; border-radius: 4px;
+        font-size: 0.75rem; font-weight: 600; margin: 2px; color: white;
     }
-
-    /* 意图标签 */
     .intent-badge {
-        display: inline-block;
-        padding: 3px 10px;
-        border-radius: 12px;
-        font-size: 0.8rem;
-        font-weight: 500;
-        background: #e8f4fd;
-        color: #1976d2;
-        margin-bottom: 0.5rem;
+        display: inline-block; padding: 3px 10px; border-radius: 12px;
+        font-size: 0.8rem; font-weight: 500; background: #e8f4fd;
+        color: #1976d2; margin-bottom: 0.5rem;
     }
-
-    /* 统计卡片 */
     .stat-card {
-        background: #f8f9fa;
-        border-radius: 8px;
-        padding: 1rem;
-        margin: 0.5rem 0;
-        border-left: 4px solid #667eea;
+        background: #f8f9fa; border-radius: 8px; padding: 1rem;
+        margin: 0.5rem 0; border-left: 4px solid #667eea;
     }
-
-    .stat-card .stat-number {
-        font-size: 1.5rem;
-        font-weight: 700;
-        color: #333;
-    }
-
-    .stat-card .stat-label {
-        font-size: 0.85rem;
-        color: #666;
-    }
-
-    /* 搜索结果卡片 */
+    .stat-card .stat-number { font-size: 1.5rem; font-weight: 700; color: #333; }
+    .stat-card .stat-label { font-size: 0.85rem; color: #666; }
     .search-result-card {
-        background: white;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        padding: 1rem;
-        margin: 0.5rem 0;
-        transition: box-shadow 0.2s;
+        background: white; border: 1px solid #e0e0e0; border-radius: 8px;
+        padding: 1rem; margin: 0.5rem 0; transition: box-shadow 0.2s;
     }
-
-    .search-result-card:hover {
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-
-    /* 快捷问题按钮 */
-    .quick-btn {
-        margin: 4px !important;
-    }
-
-    /* 聊天气泡 */
+    .search-result-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    .quick-btn { margin: 4px !important; }
     .chat-message-user {
-        background: #e3f2fd;
-        border-radius: 12px 12px 4px 12px;
-        padding: 0.75rem 1rem;
-        margin: 0.5rem 0;
+        background: #e3f2fd; border-radius: 12px 12px 4px 12px;
+        padding: 0.75rem 1rem; margin: 0.5rem 0;
     }
-
     .chat-message-assistant {
-        background: #f5f5f5;
-        border-radius: 12px 12px 12px 4px;
-        padding: 0.75rem 1rem;
-        margin: 0.5rem 0;
+        background: #f5f5f5; border-radius: 12px 12px 12px 4px;
+        padding: 0.75rem 1rem; margin: 0.5rem 0;
     }
 </style>
 """
@@ -145,19 +83,17 @@ def load_secrets():
     """从 Streamlit Secrets 加载 API 配置"""
     try:
         if hasattr(st, "secrets") and st.secrets:
-            if "LLM_API_KEY" in st.secrets:
-                config.LLM_API_KEY = st.secrets["LLM_API_KEY"]
-                os.environ["LLM_API_KEY"] = config.LLM_API_KEY
-            if "LLM_BASE_URL" in st.secrets:
-                config.LLM_API_BASE = st.secrets["LLM_BASE_URL"]
-            if "LLM_MODEL" in st.secrets:
-                config.LLM_MODEL = st.secrets["LLM_MODEL"]
-            if "EMBEDDING_API_KEY" in st.secrets:
-                config.EMBEDDING_API_KEY = st.secrets["EMBEDDING_API_KEY"]
-            if "EMBEDDING_API_BASE" in st.secrets:
-                config.EMBEDDING_API_BASE = st.secrets["EMBEDDING_API_BASE"]
-            if "EMBEDDING_MODEL" in st.secrets:
-                config.EMBEDDING_API_MODEL = st.secrets["EMBEDDING_MODEL"]
+            for key in ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL",
+                        "EMBEDDING_API_KEY", "EMBEDDING_API_BASE", "EMBEDDING_MODEL"):
+                if key in st.secrets:
+                    config_key = key
+                    if key == "LLM_BASE_URL":
+                        config_key = "LLM_API_BASE"
+                    elif key == "EMBEDDING_MODEL":
+                        config_key = "EMBEDDING_API_MODEL"
+                    setattr(config, config_key, st.secrets[key])
+                    if key == "LLM_API_KEY":
+                        os.environ["LLM_API_KEY"] = st.secrets[key]
     except Exception:
         pass
 
@@ -167,15 +103,16 @@ load_secrets()
 
 def init_session_state():
     """初始化会话状态"""
-    if "engine" not in st.session_state:
-        st.session_state.engine = None
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-    if "initialized" not in st.session_state:
-        st.session_state.initialized = False
-    if "api_configured" not in st.session_state:
-        # 如果 Secrets 已配置，标记为已配置
-        st.session_state.api_configured = bool(config.LLM_API_KEY)
+    defaults = {
+        "engine": None,
+        "chat_history": [],
+        "initialized": False,
+        "api_configured": bool(config.LLM_API_KEY),
+        "init_error": None,
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
 
 
 init_session_state()
@@ -229,19 +166,73 @@ def render_api_config():
 
 
 # ──────────────────────────────────────────
+# 引擎初始化（懒加载 + 异常保护）
+# ──────────────────────────────────────────
+
+def do_init_engine():
+    """初始化引擎，带完整异常保护"""
+    placeholder = st.empty()
+    placeholder.info("⏳ 正在加载 Embedding 模型（约 30 秒，请稍候）...")
+
+    try:
+        from rag_engine import load_engine, init_engine
+
+        engine = load_engine()
+        if engine is None:
+            placeholder.info(" 未发现索引，开始构建新索引（约 1-2 分钟）...")
+            engine = init_engine(force_rebuild=False)
+
+        st.session_state.engine = engine
+        st.session_state.api_configured = True
+        st.session_state.init_error = None
+        placeholder.empty()
+
+        stats = engine.get_kb_stats()
+        if stats.get("total_chunks", 0) == 0:
+            st.warning("⚠️ 索引为空，请点击侧边栏的「重建索引」")
+        else:
+            st.success(f"✅ 引擎初始化成功！索引块数：{stats['total_chunks']}")
+        return True
+
+    except Exception as e:
+        st.session_state.init_error = str(e)
+        placeholder.empty()
+        st.error(f"引擎初始化失败：{e}")
+        with st.expander("🔍 详细错误信息"):
+            st.code(traceback.format_exc())
+        return False
+
+
+def do_rebuild_index():
+    """重建索引，带完整异常保护"""
+    try:
+        from rag_engine import init_engine
+        with st.spinner("正在重建向量索引（约 1-2 分钟）..."):
+            engine = init_engine(force_rebuild=True)
+            st.session_state.engine = engine
+            st.session_state.init_error = None
+            st.success("✅ 索引重建完成！")
+    except Exception as e:
+        st.session_state.init_error = str(e)
+        st.error(f"❌ 索引重建失败：{e}")
+        with st.expander("🔍 详细错误信息"):
+            st.code(traceback.format_exc())
+
+
+# ──────────────────────────────────────────
 # 侧边栏
 # ──────────────────────────────────────────
 
 def render_sidebar():
     """渲染侧边栏"""
     with st.sidebar:
-        st.markdown(f"## 🔬 研知通")
+        st.markdown("## 🔬 研知通")
         st.caption("Research KB RAG Agent")
 
         # 模式切换
         mode = st.radio(
             "交互模式",
-            ["💬 对话问答", "🔍 语义搜索", "📊 知识库浏览"],
+            ["💬 对话问答", "🔍 语义搜索", " 知识库浏览"],
             index=0,
             label_visibility="collapsed",
         )
@@ -250,23 +241,31 @@ def render_sidebar():
 
         # 知识库状态
         if st.session_state.engine:
-            stats = st.session_state.engine.get_kb_stats()
-            st.markdown("### 📊 知识库状态")
-            st.markdown(f"""
-            <div class="stat-card">
-                <div class="stat-number">{stats['total_chunks']}</div>
-                <div class="stat-label">索引块总数</div>
-            </div>
-            """, unsafe_allow_html=True)
+            try:
+                stats = st.session_state.engine.get_kb_stats()
+                st.markdown("### 📊 知识库状态")
+                st.markdown(f"""
+                <div class="stat-card">
+                    <div class="stat-number">{stats['total_chunks']}</div>
+                    <div class="stat-label">索引块总数</div>
+                </div>
+                """, unsafe_allow_html=True)
 
-            for note_type, count in stats.get("type_counts", {}).items():
-                label = config.NOTE_TYPE_LABELS.get(note_type, note_type)
-                color = config.NOTE_TYPE_COLORS.get(note_type, "#999")
-                st.markdown(
-                    f'<span class="source-tag" style="background:{color}">{label}：{count}</span>',
-                    unsafe_allow_html=True,
-                )
+                for note_type, count in stats.get("type_counts", {}).items():
+                    label = config.NOTE_TYPE_LABELS.get(note_type, note_type)
+                    color = config.NOTE_TYPE_COLORS.get(note_type, "#999")
+                    st.markdown(
+                        f'<span class="source-tag" style="background:{color}">{label}：{count}</span>',
+                        unsafe_allow_html=True,
+                    )
+            except Exception:
+                st.caption("知识库状态获取失败")
 
+            st.divider()
+
+        # 显示初始化错误
+        if st.session_state.init_error:
+            st.error(f"上次初始化失败：{st.session_state.init_error[:200]}")
             st.divider()
 
         # API 配置
@@ -276,22 +275,17 @@ def render_sidebar():
         # 操作按钮
         st.divider()
 
-        # 初始化引擎按钮（未初始化时显示）
         if not st.session_state.engine:
             if st.button("🚀 初始化引擎", use_container_width=True, type="primary"):
                 do_init_engine()
+                st.rerun()
 
         col1, col2 = st.columns(2)
         with col1:
             if st.button("🔄 重建索引", use_container_width=True):
                 if st.session_state.engine or config.LLM_API_KEY:
-                    with st.spinner("正在重建向量索引（约 1-2 分钟）..."):
-                        try:
-                            from rag_engine import init_engine
-                            st.session_state.engine = init_engine(force_rebuild=True)
-                            st.success("✅ 索引重建完成！")
-                        except Exception as e:
-                            st.error(f"❌ 索引重建失败：{e}")
+                    do_rebuild_index()
+                    st.rerun()
                 else:
                     st.warning("请先配置 API Key 或点击「初始化引擎」")
         with col2:
@@ -358,7 +352,6 @@ def render_chat_mode():
         else:
             with st.chat_message("assistant", avatar="🔬"):
                 st.markdown(content)
-                # 显示来源
                 if "sources" in msg and msg["sources"]:
                     with st.expander(f"📎 引用来源（{len(msg['sources'])} 条）"):
                         for src in msg["sources"]:
@@ -370,7 +363,6 @@ def render_chat_mode():
                                 unsafe_allow_html=True,
                             )
                             st.caption(src.get("content_preview", ""))
-                # 显示意图
                 if "intent" in msg:
                     intent_label = INTENT_LABELS.get(msg["intent"], msg["intent"])
                     st.caption(f"识别意图：{intent_label}")
@@ -378,73 +370,67 @@ def render_chat_mode():
     # 输入框
     prompt = st.chat_input("向研知通提问...")
 
-    # 处理快捷问题（优先于用户输入）
+    # 处理快捷问题
     if "quick_question" in st.session_state:
         prompt = st.session_state.quick_question
         del st.session_state.quick_question
 
     if prompt:
         if not st.session_state.engine:
-            st.error("⚠️ 请先在侧边栏配置 API Key 并初始化引擎")
+            st.error("️ 请先在侧边栏点击「初始化引擎」")
             return
 
-        # 显示用户消息
         st.session_state.chat_history.append({"role": "user", "content": prompt})
-        with st.chat_message("user", avatar="🧑‍🎓"):
+        with st.chat_message("user", avatar="‍🎓"):
             st.markdown(prompt)
 
-        # 生成回答
         with st.chat_message("assistant", avatar="🔬"):
-            with st.spinner("正在检索知识库..."):
-                try:
-                    answer_placeholder = st.empty()
-                    sources = []
-                    intent = "general"
-                    answer_parts = []
+            try:
+                answer_placeholder = st.empty()
+                sources = []
+                intent = "general"
+                answer_parts = []
 
-                    for chunk in st.session_state.engine.query_stream(prompt):
-                        if isinstance(chunk, dict) and "__meta__" in chunk:
-                            meta = chunk["__meta__"]
-                            sources = meta["sources"]
-                            intent = meta["intent"]
-                        else:
-                            answer_parts.append(chunk)
-                            answer_placeholder.markdown("".join(answer_parts))
+                for chunk in st.session_state.engine.query_stream(prompt):
+                    if isinstance(chunk, dict) and "__meta__" in chunk:
+                        meta = chunk["__meta__"]
+                        sources = meta["sources"]
+                        intent = meta["intent"]
+                    else:
+                        answer_parts.append(chunk)
+                        answer_placeholder.markdown("".join(answer_parts))
 
-                    answer = "".join(answer_parts)
+                answer = "".join(answer_parts)
 
-                    # 来源
-                    if sources:
-                        with st.expander(f"📎 引用来源（{len(sources)} 条）"):
-                            for src in sources:
-                                type_label = src.get("type_label", "")
-                                color = NOTE_TYPE_COLORS.get(src.get("type", ""), "#999")
-                                st.markdown(
-                                    f'<span class="source-tag" style="background:{color}">{type_label}</span>'
-                                    f' **{src.get("file", "")}**',
-                                    unsafe_allow_html=True,
-                                )
-                                st.caption(src.get("content_preview", ""))
+                if sources:
+                    with st.expander(f"📎 引用来源（{len(sources)} 条）"):
+                        for src in sources:
+                            type_label = src.get("type_label", "")
+                            color = NOTE_TYPE_COLORS.get(src.get("type", ""), "#999")
+                            st.markdown(
+                                f'<span class="source-tag" style="background:{color}">{type_label}</span>'
+                                f' **{src.get("file", "")}**',
+                                unsafe_allow_html=True,
+                            )
+                            st.caption(src.get("content_preview", ""))
 
-                    # 意图
-                    intent_label = INTENT_LABELS.get(intent, intent)
-                    st.caption(f"识别意图：{intent_label}")
+                intent_label = INTENT_LABELS.get(intent, intent)
+                st.caption(f"识别意图：{intent_label}")
 
-                    # 保存到历史
-                    st.session_state.chat_history.append({
-                        "role": "assistant",
-                        "content": answer,
-                        "sources": sources,
-                        "intent": intent,
-                    })
+                st.session_state.chat_history.append({
+                    "role": "assistant",
+                    "content": answer,
+                    "sources": sources,
+                    "intent": intent,
+                })
 
-                except Exception as e:
-                    error_msg = f"❌ 生成失败：{e}"
-                    st.error(error_msg)
-                    st.session_state.chat_history.append({
-                        "role": "assistant",
-                        "content": error_msg,
-                    })
+            except Exception as e:
+                error_msg = f"❌ 生成失败：{e}"
+                st.error(error_msg)
+                st.session_state.chat_history.append({
+                    "role": "assistant",
+                    "content": error_msg,
+                })
 
 
 # ──────────────────────────────────────────
@@ -467,22 +453,19 @@ def render_search_mode():
         )
 
     type_map = {
-        "全部": None,
-        "知识卡": "knowledge",
-        "实验": "experiment",
-        "日报": "daily",
-        "工作流": "skill",
-        "原始资料": "source",
-        "地图": "map",
+        "全部": None, "知识卡": "knowledge", "实验": "experiment",
+        "日报": "daily", "工作流": "skill", "原始资料": "source", "地图": "map",
     }
 
     if query and st.session_state.engine:
         with st.spinner("搜索中..."):
-            results = st.session_state.engine.search_only(
-                query,
-                top_k=15,
-                note_type=type_map.get(note_type),
-            )
+            try:
+                results = st.session_state.engine.search_only(
+                    query, top_k=15, note_type=type_map.get(note_type),
+                )
+            except Exception as e:
+                st.error(f"搜索失败：{e}")
+                return
 
         if results:
             st.success(f"找到 {len(results)} 条相关结果")
@@ -507,7 +490,7 @@ def render_search_mode():
 
 # ──────────────────────────────────────────
 # 浏览模式
-# ──────────────────────────────────────────
+# ─────────────────────────────────────────
 
 def render_browse_mode():
     """渲染知识库浏览界面"""
@@ -517,9 +500,12 @@ def render_browse_mode():
         st.warning("请先初始化引擎")
         return
 
-    stats = st.session_state.engine.get_kb_stats()
+    try:
+        stats = st.session_state.engine.get_kb_stats()
+    except Exception:
+        st.error("获取知识库统计失败")
+        return
 
-    # 总览
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("索引块总数", stats["total_chunks"])
@@ -532,14 +518,12 @@ def render_browse_mode():
 
     st.divider()
 
-    # 按类型浏览
     type_counts = stats.get("type_counts", {})
     for note_type, count in sorted(type_counts.items(), key=lambda x: -x[1]):
         label = config.NOTE_TYPE_LABELS.get(note_type, note_type)
         color = NOTE_TYPE_COLORS.get(note_type, "#999")
 
         with st.expander(f"{label}（{count} 块）"):
-            # 检索该类型的示例
             try:
                 results = st.session_state.engine.search_only(
                     "", top_k=5, note_type=note_type
@@ -551,7 +535,6 @@ def render_browse_mode():
             except Exception:
                 st.info("暂无数据")
 
-    # 最近活跃（通过 Daily 检索）
     st.divider()
     st.markdown("#### 📅 最近日报")
     try:
@@ -567,71 +550,14 @@ def render_browse_mode():
 
 
 # ──────────────────────────────────────────
-# 初始化引擎
-# ──────────────────────────────────────────
-
-def try_init_engine():
-    """尝试初始化引擎（非阻塞，失败也不卡页面）"""
-    if st.session_state.engine:
-        return True
-
-    if not config.LLM_API_KEY:
-        return False
-
-    # 不在这里阻塞加载，交给侧边栏的「初始化引擎」按钮
-    return False
-
-
-def do_init_engine():
-    """侧边栏按钮调用的初始化函数"""
-    init_placeholder = st.empty()
-    init_placeholder.info("⏳ 正在加载 Embedding 模型（约 30 秒，请稍候）...")
-
-    try:
-        from rag_engine import load_engine, init_engine
-
-        engine = load_engine()
-        if engine is None:
-            init_placeholder.info("📂 未发现索引，开始构建新索引（约 1-2 分钟）...")
-            engine = init_engine(force_rebuild=False)
-
-        st.session_state.engine = engine
-        st.session_state.api_configured = True
-        init_placeholder.empty()
-
-        stats = engine.get_kb_stats()
-        if stats.get("total_chunks", 0) == 0:
-            st.warning("⚠️ 索引为空，请点击侧边栏的「重建索引」")
-        else:
-            st.success(f"✅ 引擎初始化成功！索引块数：{stats['total_chunks']}")
-        return True
-    except Exception as e:
-        import traceback
-        init_placeholder.empty()
-        st.error(f"引擎初始化失败：{e}")
-        with st.expander("🔍 详细错误信息"):
-            st.code(traceback.format_exc())
-        return False
-
-
-# ──────────────────────────────────────────
 # 主界面
 # ──────────────────────────────────────────
 
-def main():
-    mode = render_sidebar()
+mode = render_sidebar()
 
-    # 尝试初始化
-    try_init_engine()
-
-    # 根据模式渲染
-    if "💬" in mode:
-        render_chat_mode()
-    elif "🔍" in mode:
-        render_search_mode()
-    elif "📊" in mode:
-        render_browse_mode()
-
-
-if __name__ == "__main__":
-    main()
+if "💬" in mode:
+    render_chat_mode()
+elif "🔍" in mode:
+    render_search_mode()
+elif "📊" in mode:
+    render_browse_mode()

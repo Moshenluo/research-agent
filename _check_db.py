@@ -1,0 +1,12 @@
+import sqlite3
+conn = sqlite3.connect('chroma_db/chroma.sqlite3')
+cursor = conn.cursor()
+cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+print('Tables:', cursor.fetchall())
+cursor.execute('SELECT * FROM collections')
+print('Collections:', cursor.fetchall())
+cursor.execute('SELECT COUNT(*) FROM embeddings')
+print('Embeddings count:', cursor.fetchone()[0])
+cursor.execute('SELECT COUNT(*) FROM embedding_metadata')
+print('Metadata count:', cursor.fetchone()[0])
+conn.close()

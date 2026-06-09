@@ -7,7 +7,8 @@ import os
 
 # 禁用 ChromaDB 遥测，避免 posthog/tenacity 引发 RuntimeError
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
-os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 import re
 import json
@@ -68,7 +69,6 @@ def get_embeddings():
 
     if mode == "local":
         try:
-            os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
             from langchain_huggingface import HuggingFaceEmbeddings
             logger.info(f"[Local] 使用本地 Embedding 模型：{config.EMBEDDING_LOCAL_MODEL}")
             return HuggingFaceEmbeddings(
@@ -76,7 +76,7 @@ def get_embeddings():
                 model_kwargs={"device": "cpu"},
                 encode_kwargs={
                     "normalize_embeddings": True,
-                    "batch_size": 4,  # 小批次，降低内存占用
+                    "batch_size": 1,
                 },
             )
         except ImportError:
@@ -403,7 +403,7 @@ def build_vectorstore(
     chunks = split_documents(expanded)
     logger.info(f"[Split] 分块完成，共 {len(chunks)} 个块")
 
-    # 构建向量库
+    # 构建向量库（分批处理，避免内存溢出）
     logger.info(f"[Build] 构建向量索引（模型：{config.EMBEDDING_LOCAL_MODEL if config.EMBEDDING_MODE == 'local' else config.EMBEDDING_API_MODEL}）...")
 
     # 如果存在旧索引，先删除
@@ -411,13 +411,22 @@ def build_vectorstore(
         import shutil
         shutil.rmtree(persist_dir, ignore_errors=True)
 
-    vectorstore = Chroma.from_documents(
-        documents=chunks,
-        embedding=embeddings,
-        persist_directory=persist_dir,
-        collection_name=config.CHROMA_COLLECTION_NAME,
-    )
-    vectorstore.persist()
+    # 分批添加到 ChromaDB
+    INDEX_BATCH_SIZE = 10
+    vectorstore = None
+    for i in range(0, len(chunks), INDEX_BATCH_SIZE):
+        batch = chunks[i:i + INDEX_BATCH_SIZE]
+        logger.info(f"[Build] 处理批次 {i // INDEX_BATCH_SIZE + 1}/{(len(chunks) - 1) // INDEX_BATCH_SIZE + 1}（{len(batch)} 个块）...")
+        if vectorstore is None:
+            vectorstore = Chroma.from_documents(
+                documents=batch,
+                embedding=embeddings,
+                persist_directory=persist_dir,
+                collection_name=config.CHROMA_COLLECTION_NAME,
+            )
+        else:
+            vectorstore.add_documents(batch)
+        vectorstore.persist()
 
     # 保存 manifest
     new_manifest = {}

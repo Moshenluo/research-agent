@@ -8,7 +8,8 @@ import traceback
 
 # 禁用 ChromaDB 遥测，避免 posthog/tenacity 引发 RuntimeError
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
-os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 import streamlit as st
 from pathlib import Path

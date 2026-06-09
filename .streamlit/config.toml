@@ -1,8 +1,8 @@
 [server]
 port = 8503
+headless = true
+enableCORS = false
+enableXsrfProtection = false
 
-[theme]
-primaryColor = "#667eea"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f8f9fa"
-textColor = "#333333"
+[browser]
+gatherUsageStats = false

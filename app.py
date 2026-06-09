@@ -170,17 +170,36 @@ def render_api_config():
 # ──────────────────────────────────────────
 
 def do_init_engine():
-    """初始化引擎，带完整异常保护"""
+    """加载已有索引，不执行重建操作"""
     placeholder = st.empty()
-    placeholder.info("⏳ 正在加载 Embedding 模型（约 30 秒，请稍候）...")
+    placeholder.info("⏳ 正在加载已有索引...")
 
     try:
-        from rag_engine import load_engine, init_engine
+        from rag_engine import load_engine
 
         engine = load_engine()
         if engine is None:
-            placeholder.info(" 未发现索引，开始构建新索引（约 1-2 分钟）...")
-            engine = init_engine(force_rebuild=False)
+            placeholder.empty()
+            st.warning("⚠️ 未找到已有索引，请在命令行运行以下命令构建索引：")
+            st.code("python build_index.py", language="bash")
+            st.caption(f"知识库路径：{config.KB_ROOT}")
+            with st.expander("📋 说明"):
+                st.markdown("""
+                索引构建会在后台执行以下操作：
+                1. 加载本地 Embedding 模型（首次需下载）
+                2. 扫描知识库目录中的所有 Markdown 文件
+                3. 解析 YAML frontmatter、Obsidian 链接
+                4. 分块并生成向量索引
+                5. 保存至 `chroma_db/` 目录
+                
+                构建过程约需 1-2 分钟，请在命令行运行：
+                ```
+                cd research-rag-agent
+                python build_index.py
+                ```
+                构建完成后刷新本页面即可。
+                """)
+            return False
 
         st.session_state.engine = engine
         st.session_state.api_configured = True
@@ -189,34 +208,25 @@ def do_init_engine():
 
         stats = engine.get_kb_stats()
         if stats.get("total_chunks", 0) == 0:
-            st.warning("⚠️ 索引为空，请点击侧边栏的「重建索引」")
+            st.warning("⚠️ 索引为空，需要重建索引：`python build_index.py --force`")
         else:
-            st.success(f"✅ 引擎初始化成功！索引块数：{stats['total_chunks']}")
+            st.success(f"✅ 索引加载成功！{stats['total_chunks']} 个向量块")
         return True
 
     except Exception as e:
         st.session_state.init_error = str(e)
         placeholder.empty()
-        st.error(f"引擎初始化失败：{e}")
+        st.error(f"索引加载失败：{e}")
         with st.expander("🔍 详细错误信息"):
             st.code(traceback.format_exc())
         return False
 
 
 def do_rebuild_index():
-    """重建索引，带完整异常保护"""
-    try:
-        from rag_engine import init_engine
-        with st.spinner("正在重建向量索引（约 1-2 分钟）..."):
-            engine = init_engine(force_rebuild=True)
-            st.session_state.engine = engine
-            st.session_state.init_error = None
-            st.success("✅ 索引重建完成！")
-    except Exception as e:
-        st.session_state.init_error = str(e)
-        st.error(f"❌ 索引重建失败：{e}")
-        with st.expander("🔍 详细错误信息"):
-            st.code(traceback.format_exc())
+    """重建索引 - 提示用户在命令行运行"""
+    st.warning("⚠️ 索引重建需要 1-2 分钟，请在命令行运行：")
+    st.code("python build_index.py --force", language="bash")
+    st.caption("重建完成后刷新本页面即可加载新索引。")
 
 
 # ──────────────────────────────────────────

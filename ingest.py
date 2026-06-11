@@ -443,6 +443,125 @@ def build_vectorstore(
 
 
 # ──────────────────────────────────────────
+# 增量更新
+# ──────────────────────────────────────────
+
+def incremental_update(persist_dir: str = config.CHROMA_PERSIST_DIR):
+    """增量更新索引：只处理变更的文件"""
+    embeddings = get_embeddings()
+
+    # 加载已有向量库
+    vectorstore = Chroma(
+        persist_directory=persist_dir,
+        embedding_function=embeddings,
+        collection_name=config.CHROMA_COLLECTION_NAME,
+    )
+
+    # 加载 manifest
+    old_manifest = load_manifest(persist_dir)
+    if not old_manifest:
+        logger.warning("Manifest 不存在，回退到全量重建")
+        return None
+
+    # 扫描当前文件
+    kb = Path(config.KB_ROOT)
+    if not kb.exists():
+        logger.error(f"知识库路径不存在：{config.KB_ROOT}")
+        return vectorstore
+
+    current_manifest = {}
+    all_file_paths = set()
+
+    # 顶层文件
+    for filename in config.KB_TOP_FILES:
+        fp = kb / filename
+        if fp.exists():
+            current_manifest[filename] = compute_file_hash(str(fp))
+            all_file_paths.add(str(fp))
+
+    # 子目录文件
+    for subdir in config.KB_SUBDIRS:
+        subpath = kb / subdir
+        if not subpath.exists():
+            continue
+        for md_file in subpath.rglob("*.md"):
+            parts = md_file.relative_to(kb).parts
+            if any(p.startswith(".") for p in parts):
+                continue
+            rel = str(md_file.relative_to(kb))
+            current_manifest[rel] = compute_file_hash(str(md_file))
+            all_file_paths.add(str(md_file))
+
+    added = set(current_manifest.keys()) - set(old_manifest.keys())
+    removed = set(old_manifest.keys()) - set(current_manifest.keys())
+    changed = {
+        k for k in set(current_manifest.keys()) & set(old_manifest.keys())
+        if current_manifest[k] != old_manifest[k]
+    }
+
+    if not added and not removed and not changed:
+        logger.info("[Update] 知识库无变更")
+        return vectorstore
+
+    logger.info(f"[Update] 变更检测：新增 {len(added)}，删除 {len(removed)}，修改 {len(changed)}")
+
+    # 删除已移除的文件对应的 chunks
+    ids_to_delete = []
+    if removed:
+        collection = vectorstore._collection
+        all_items = collection.get(include=["metadatas"])
+        for i, meta in enumerate(all_items.get("metadatas", [])):
+            if meta and meta.get("source_file", "") in removed:
+                ids_to_delete.append(all_items["ids"][i])
+        if ids_to_delete:
+            collection.delete(ids=ids_to_delete)
+            logger.info(f"[Update] 删除 {len(ids_to_delete)} 个过期块")
+
+    # 处理新增和修改的文件
+    to_process = added | changed
+    if to_process:
+        new_docs = []
+        for rel_path in to_process:
+            filepath = str(kb / rel_path)
+            if not os.path.exists(filepath):
+                continue
+            doc = load_markdown_file(filepath, config.KB_ROOT, compute_hash=True)
+            if doc:
+                new_docs.append(doc)
+
+        if new_docs:
+            # 先删除旧版本
+            if changed:
+                collection = vectorstore._collection
+                all_items = collection.get(include=["metadatas"])
+                ids_to_del = []
+                for i, meta in enumerate(all_items.get("metadatas", [])):
+                    if meta and meta.get("source_file", "") in changed:
+                        ids_to_del.append(all_items["ids"][i])
+                if ids_to_del:
+                    collection.delete(ids=ids_to_del)
+
+            # 扩展链接、分块
+            expanded = expand_links(new_docs, config.KB_ROOT)
+            chunks = split_documents(expanded)
+            logger.info(f"[Update] 处理 {len(new_docs)} 个文件，生成 {len(chunks)} 个块")
+
+            # 分批添加
+            BATCH = 10
+            for i in range(0, len(chunks), BATCH):
+                batch = chunks[i:i + BATCH]
+                vectorstore.add_documents(batch)
+                if (i // BATCH + 1) % 5 == 0:
+                    logger.info(f"[Update] 批次 {i // BATCH + 1}/{ (len(chunks) - 1) // BATCH + 1}")
+
+    # 保存新 manifest
+    save_manifest(persist_dir, current_manifest)
+    logger.info(f"[Update] 增量更新完成，共 {vectorstore._collection.count()} 个块")
+
+    return vectorstore
+
+
+# ──────────────────────────────────────────
 # 主入口
 # ──────────────────────────────────────────
 

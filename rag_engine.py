@@ -359,6 +359,17 @@ def init_engine(force_rebuild: bool = False) -> ResearchRAGEngine:
     return ResearchRAGEngine(vectorstore)
 
 
+def update_engine_incremental() -> ResearchRAGEngine:
+    """增量更新引擎，只处理变更文件"""
+    from ingest import incremental_update
+
+    vectorstore = incremental_update()
+    if vectorstore is None:
+        raise RuntimeError("增量更新失败，请运行 build_index.py 全量重建")
+
+    return ResearchRAGEngine(vectorstore)
+
+
 def load_engine() -> Optional[ResearchRAGEngine]:
     """加载已有向量库（不重新构建）"""
     if not os.path.exists(config.CHROMA_PERSIST_DIR):

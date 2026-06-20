@@ -144,6 +144,8 @@ def init_session():
         "init_error": None,
         "build_info": None,
         "last_check_time": 0,
+        "_auto_sync_done": False,
+        "_auto_sync_retry": 0,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -224,7 +226,7 @@ def check_and_update_engine():
 # ──────────────────────────────────────────
 
 def initialize_app():
-    """自动初始化：加载引擎、检测更新"""
+    """自动初始化：加载引擎、检测更新并自动增量同步"""
     status = {"state": "loading", "message": "正在连接知识库..."}
 
     # Phase 1: 加载引擎缓存
@@ -235,15 +237,40 @@ def initialize_app():
 
     status["chunks"] = engine.get_kb_stats().get("total_chunks", 0)
 
-    # Phase 2: 检查知识库变更
+    # Phase 2: 检查知识库变更，自动增量同步
     changes = check_and_update_engine()
     if changes and changes["total_changes"] > 0:
-        status["state"] = "outdated"
+        if st.session_state.get("_auto_sync_done"):
+            status["state"] = "ready"
+            return status
+
+        retry = st.session_state.get("_auto_sync_retry", 0)
+        if retry >= 2:
+            status["state"] = "outdated"
+            status["changes"] = changes
+            return status
+
+        status["state"] = "syncing"
         status["changes"] = changes
         return status
 
     status["state"] = "ready"
     return status
+
+
+def run_auto_sync(changes: dict):
+    """执行启动时自动增量同步"""
+    from rag_engine import update_engine_incremental
+
+    try:
+        with st.spinner(f"正在同步 {changes['total_changes']} 个文件变更..."):
+            update_engine_incremental()
+        st.cache_resource.clear()
+        st.session_state._auto_sync_done = True
+        st.session_state._auto_sync_retry = 0
+        st.rerun()
+    except Exception:
+        st.session_state._auto_sync_retry = st.session_state.get("_auto_sync_retry", 0) + 1
 
 
 # ──────────────────────────────────────────
@@ -272,7 +299,17 @@ def render_sidebar():
         status = initialize_app()
         st.markdown("### 📡 引擎状态")
 
-        if status["state"] == "ready":
+        if status["state"] == "syncing":
+            changes = status["changes"]
+            st.info(f"🔄 检测到 {changes['total_changes']} 个文件变更，正在自动同步...")
+            st.markdown(f"""
+            <div style="font-size:0.8rem;color:#94a3b8;margin-bottom:0.5rem;">
+            新增 {len(changes['added'])} · 修改 {len(changes['changed'])} · 删除 {len(changes['removed'])}
+            </div>
+            """, unsafe_allow_html=True)
+            run_auto_sync(changes)
+
+        elif status["state"] == "ready":
             chunks = status.get("chunks", 0)
             st.markdown(f"""
             <div class="kb-stat">
@@ -299,10 +336,12 @@ def render_sidebar():
                             unsafe_allow_html=True,
                         )
 
-            # 检查更新
+            # 检查更新 / 完整重建
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("🔄 检查更新", use_container_width=True):
+                    st.session_state._auto_sync_done = False
+                    st.session_state._auto_sync_retry = 0
                     st.cache_resource.clear()
                     st.rerun()
             with col2:
@@ -310,22 +349,26 @@ def render_sidebar():
                     with st.spinner("重建中..."):
                         from rag_engine import init_engine as rebuild
                         rebuild(force_rebuild=True)
+                        st.session_state._auto_sync_done = False
+                        st.session_state._auto_sync_retry = 0
                         st.cache_resource.clear()
                     st.rerun()
 
         elif status["state"] == "outdated":
             changes = status["changes"]
-            st.warning(f"🔄 检测到 {changes['total_changes']} 个文件变更")
+            st.warning(f"⚠️ 自动同步失败，检测到 {changes['total_changes']} 个文件变更")
             st.markdown(f"""
             <div style="font-size:0.8rem;color:#94a3b8;margin-bottom:0.5rem;">
             新增 {len(changes['added'])} · 修改 {len(changes['changed'])} · 删除 {len(changes['removed'])}
             </div>
             """, unsafe_allow_html=True)
 
-            if st.button("⚡ 同步更新", use_container_width=True, type="primary"):
-                with st.spinner("正在增量更新索引..."):
+            if st.button("🔨 完整重建", use_container_width=True, type="primary"):
+                with st.spinner("重建中..."):
                     from rag_engine import init_engine as rebuild
                     rebuild(force_rebuild=True)
+                    st.session_state._auto_sync_done = False
+                    st.session_state._auto_sync_retry = 0
                     st.cache_resource.clear()
                 st.rerun()
 

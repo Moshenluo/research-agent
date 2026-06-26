@@ -8,6 +8,7 @@ import os
 # 禁用 ChromaDB 遥测，避免 posthog/tenacity 引发 RuntimeError
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
+import json
 import logging
 from typing import List, Optional
 
@@ -185,27 +186,113 @@ class ResearchRAGEngine:
         except Exception as e:
             logger.warning(f"LLM 初始化失败：{e}")
 
+    def _rerank(self, question: str, docs: List[Document], top_k: int = None) -> List[Document]:
+        """LLM 重排序：让 LLM 对候选文档做相关性评分，返回 top_k"""
+        if top_k is None:
+            top_k = config.RERANK_TOP_K
+        if len(docs) <= top_k:
+            return docs
+
+        candidates = []
+        for i, doc in enumerate(docs):
+            src = doc.metadata.get("source_file", "")
+            snippet = doc.page_content[:300].replace("\n", " ")
+            candidates.append(f"[{i}] [{src}] {snippet}")
+
+        prompt = (
+            f'评估以下文档与问题的相关性，对每篇文档打分 (0=无关, 10=高度相关)。\n'
+            f'问题：{question}\n\n'
+            f'文档：\n' + "\n".join(candidates) + "\n\n"
+            '只返回 JSON 数组，如 [8, 3, 0, 9, ...]，不要其他内容。'
+        )
+
+        try:
+            response = self.llm.invoke(prompt)
+            text = response.content.strip()
+            scores = json.loads(text)
+            if len(scores) != len(docs):
+                scores = [5] * len(docs)
+        except Exception:
+            return docs[:top_k]
+
+        scored = list(zip(docs, scores))
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return [doc for doc, _ in scored[:top_k]]
+
+    def _rewrite_queries(self, question: str, count: int = None) -> List[str]:
+        """查询改写：将用户问题拆解为多个检索角度"""
+        if count is None:
+            count = config.REWRITE_COUNT
+
+        prompt = (
+            f'将以下问题改写为 {count} 个不同的检索查询，覆盖不同角度和关键词表述。\n'
+            f'问题：{question}\n\n'
+            f'只返回 JSON 字符串数组，如 ["查询1", "查询2", "查询3"]，不要其他内容。'
+        )
+
+        try:
+            response = self.llm.invoke(prompt)
+            text = response.content.strip()
+            rewritten = json.loads(text)
+            if isinstance(rewritten, list) and len(rewritten) > 0:
+                return [q for q in rewritten if isinstance(q, str)][:count]
+        except Exception:
+            pass
+
+        return [question]
+
     def _retrieve(self, question: str, use_intent: bool = True):
-        """检索 + 构建上下文，返回 (source_docs, intent, context, prompt_text)"""
+        """检索 + 构建上下文，支持查询改写和多路召回 + Rerank"""
         intent = classify_intent(question) if use_intent else "general"
 
-        if use_intent and INTENT_RETRIEVAL_STRATEGY[intent] is not None:
-            strategy = INTENT_RETRIEVAL_STRATEGY[intent]
-            all_docs = []
-            for note_type, k in strategy:
-                docs = self.retriever.search_by_type(question, note_type, top_k=k)
-                all_docs.extend(docs)
-            seen = set()
-            unique_docs = []
-            for doc in all_docs:
-                key = f"{doc.metadata.get('source_file', '')}_{doc.metadata.get('chunk_index', '')}"
-                if key not in seen:
-                    seen.add(key)
-                    unique_docs.append(doc)
-            source_docs = unique_docs[:config.DEFAULT_TOP_K * 2]
+        # Phase 1: 查询改写 → 多路检索
+        all_docs = []
+        if config.ENABLE_QUERY_REWRITE and self.llm:
+            queries = self._rewrite_queries(question)
         else:
-            source_docs = self.retriever.search(question)
+            queries = [question]
 
+        for q in queries:
+            docs = self._single_retrieve(q, intent)
+            all_docs.extend(docs)
+
+        # 去重
+        seen = set()
+        unique_docs = []
+        for doc in all_docs:
+            key = f"{doc.metadata.get('source_file', '')}_{doc.metadata.get('chunk_index', '')}"
+            if key not in seen:
+                seen.add(key)
+                unique_docs.append(doc)
+
+        # Phase 2: Rerank 精排
+        candidate_k = config.RERANK_CANDIDATE_K
+        candidates = unique_docs[:candidate_k]
+
+        if config.ENABLE_RERANK and self.llm and len(candidates) > config.RERANK_TOP_K:
+            source_docs = self._rerank(question, candidates, config.RERANK_TOP_K)
+        else:
+            source_docs = candidates[:config.DEFAULT_TOP_K * 2]
+
+        # Phase 3: 知识图谱增强 (如果可用)
+        if config.ENABLE_KG:
+            try:
+                from graph import load_graph, retrieve_graph_context
+                kg = load_graph()
+                if kg is not None:
+                    kg_entities = self._extract_query_entities(question)
+                    if kg_entities:
+                        kg_context = retrieve_graph_context(kg, kg_entities, max_depth=config.KG_RETRIEVAL_DEPTH)
+                        if kg_context:
+                            kg_doc = Document(
+                                page_content=kg_context,
+                                metadata={"source_file": "知识图谱", "type": "knowledge_graph"},
+                            )
+                            source_docs.insert(0, kg_doc)
+            except Exception:
+                pass
+
+        # 构建上下文
         context_parts = []
         for doc in source_docs:
             src = doc.metadata.get("source_file", "未知")
@@ -229,6 +316,37 @@ class ResearchRAGEngine:
 回答（引用来源时标注 [来源：文件名]）："""
 
         return source_docs, intent, prompt_text
+
+    def _single_retrieve(self, question: str, intent: str) -> List[Document]:
+        """单次检索：按意图策略检索"""
+        strategy = INTENT_RETRIEVAL_STRATEGY.get(intent)
+
+        if strategy is not None:
+            all_docs = []
+            k = config.REWRITE_RETRIEVAL_K if config.ENABLE_QUERY_REWRITE else config.DEFAULT_TOP_K
+            for note_type, type_k in strategy:
+                adjusted_k = min(type_k, k)
+                docs = self.retriever.search_by_type(question, note_type, top_k=adjusted_k)
+                all_docs.extend(docs)
+            return all_docs
+        else:
+            return self.retriever.search(question)
+
+    def _extract_query_entities(self, question: str) -> List[str]:
+        """从查询中提取关键实体，用于图谱检索"""
+        prompt = (
+            f'从以下问题中提取关键实体（人名、技术名、概念、方法、工具等），返回 JSON 字符串数组。\n'
+            f'问题：{question}\n\n只返回 ["实体1", "实体2", ...]，不要其他内容。'
+        )
+        try:
+            response = self.llm.invoke(prompt)
+            text = response.content.strip()
+            entities = json.loads(text)
+            if isinstance(entities, list):
+                return [e for e in entities if isinstance(e, str)]
+        except Exception:
+            pass
+        return []
 
     def _build_sources(self, source_docs: List[Document]) -> List[dict]:
         sources = []

@@ -273,6 +273,31 @@ def run_auto_sync(changes: dict):
         st.session_state._auto_sync_retry = st.session_state.get("_auto_sync_retry", 0) + 1
 
 
+def _rebuild_graph():
+    """重建知识图谱"""
+    import config as cfg
+    from langchain_openai import ChatOpenAI
+    from ingest import load_all_documents, split_documents, expand_links
+    from graph import build_graph_from_chunks
+
+    if not cfg.LLM_API_KEY:
+        st.warning("LLM API Key 未配置，跳过高风险构建")
+        return
+
+    llm = ChatOpenAI(
+        model=cfg.LLM_MODEL,
+        api_key=cfg.LLM_API_KEY,
+        base_url=cfg.LLM_API_BASE,
+        temperature=0.1,
+        max_tokens=1024,
+    )
+    docs = load_all_documents(cfg.KB_ROOT)
+    expanded = expand_links(docs, cfg.KB_ROOT)
+    chunks = split_documents(expanded)
+    kg = build_graph_from_chunks(chunks, llm)
+    st.toast(f"图谱构建完成：{kg.graph.number_of_nodes()} 节点, {kg.graph.number_of_edges()} 边")
+
+
 # ──────────────────────────────────────────
 # 侧边栏
 # ──────────────────────────────────────────
@@ -336,6 +361,21 @@ def render_sidebar():
                             unsafe_allow_html=True,
                         )
 
+            # 知识图谱统计
+            with st.expander("🧠 知识图谱"):
+                try:
+                    from graph import load_graph
+                    kg = load_graph()
+                    if kg and kg.graph.number_of_nodes() > 0:
+                        nodes = kg.graph.number_of_nodes()
+                        edges = kg.graph.number_of_edges()
+                        st.metric("实体节点", nodes)
+                        st.metric("关系边", edges)
+                    else:
+                        st.caption("暂未构建，点击下方按钮构建")
+                except Exception:
+                    st.caption("图谱加载失败")
+
             # 检查更新 / 完整重建
             col1, col2 = st.columns(2)
             with col1:
@@ -349,10 +389,18 @@ def render_sidebar():
                     with st.spinner("重建中..."):
                         from rag_engine import init_engine as rebuild
                         rebuild(force_rebuild=True)
+                        _rebuild_graph()
                         st.session_state._auto_sync_done = False
                         st.session_state._auto_sync_retry = 0
                         st.cache_resource.clear()
                     st.rerun()
+
+            # 知识图谱构建
+            if st.button("🧠 构建知识图谱", use_container_width=True):
+                with st.spinner("构建知识图谱中..."):
+                    _rebuild_graph()
+                st.cache_resource.clear()
+                st.rerun()
 
         elif status["state"] == "outdated":
             changes = status["changes"]
@@ -367,6 +415,7 @@ def render_sidebar():
                 with st.spinner("重建中..."):
                     from rag_engine import init_engine as rebuild
                     rebuild(force_rebuild=True)
+                    _rebuild_graph()
                     st.session_state._auto_sync_done = False
                     st.session_state._auto_sync_retry = 0
                     st.cache_resource.clear()

@@ -78,6 +78,28 @@ RETRIEVAL_SEARCH_TYPE = "mmr"  # "similarity" 或 "mmr"
 MMR_LAMBDA = 0.7  # MMR 多样性参数，1=纯相关，0=纯多样
 
 # ============================================================
+# Rerank 重排序 (LLM-based)
+# ============================================================
+ENABLE_RERANK = os.getenv("ENABLE_RERANK", "true").lower() == "true"
+RERANK_TOP_K = 3         # Rerank 后保留的文档数
+RERANK_CANDIDATE_K = 10  # 送入 Rerank 的候选文档数
+
+# ============================================================
+# 查询改写 / 多路召回
+# ============================================================
+ENABLE_QUERY_REWRITE = os.getenv("ENABLE_QUERY_REWRITE", "true").lower() == "true"
+REWRITE_COUNT = 3  # 改写后的查询数量
+REWRITE_RETRIEVAL_K = 3  # 每个改写查询的检索数量
+
+# ============================================================
+# 知识图谱
+# ============================================================
+ENABLE_KG = os.getenv("ENABLE_KG", "true").lower() == "true"
+KG_PERSIST_DIR = os.path.join(CHROMA_PERSIST_DIR, "graph")
+KG_MAX_ENTITIES_PER_CHUNK = 5
+KG_RETRIEVAL_DEPTH = 2  # 子图检索跳数
+
+# ============================================================
 # Obsidian 链接解析
 # ============================================================
 # 解析 [[]] 链接后，是否自动扩展上下文（把链接目标的内容也加入检索上下文）
